@@ -1,13 +1,54 @@
 [
   {
-    "name": "week",
-    "title": "This week",
-    "subtitle": "Health and Safety for Claude Code: what needs attention, rendered by npm run view",
+    "name": "safety-board",
+    "title": "The safety board",
+    "subtitle": "Health and Safety for Claude Code: what needs a decision, the open incidents and the actions. Rendered by npm run view.",
     "sections": [
       {
-        "title": "Needs attention",
-        "note": "TODO(author): point this at the industry's attention view (overdue, stuck, quiet).",
-        "sql": "select 'replace me' as item, 'TODO(author)' as why"
+        "title": "Needs a decision",
+        "note": "Unreported notifiable events outrank everything (HSWA s 56). Then overdue actions, induction gaps, weak controls, stale reviews and quiet sites.",
+        "sql": "select case reason when 'notifiable_unreported' then 'NOTIFIABLE EVENT, WorkSafe not told' when 'action_overdue' then 'Corrective action overdue' when 'induction_missing' then 'No site induction' when 'induction_expired' then 'Induction expired' when 'hazard_uncontrolled' then 'High hazard, weak control' when 'hazard_review_overdue' then 'Hazard review overdue' when 'investigation_stale' then 'Investigation going stale' when 'inspection_overdue' then 'Inspection overdue' when 'sds_gap' then 'Safety data sheet gap' when 'training_expiring' then 'Ticket expiring' when 'toolbox_quiet' then 'Site quiet: no toolbox talk' else reason end as what, label as record, site, coalesce(owner, '') as owner, days, detail from v_attention order by case reason when 'notifiable_unreported' then 1 when 'action_overdue' then 2 when 'induction_missing' then 3 when 'induction_expired' then 4 when 'hazard_uncontrolled' then 5 when 'hazard_review_overdue' then 6 when 'investigation_stale' then 7 when 'inspection_overdue' then 8 when 'sds_gap' then 9 when 'training_expiring' then 10 else 11 end, days desc nulls last"
+      },
+      {
+        "title": "Open incidents",
+        "note": "Report, notify WorkSafe if notifiable, investigate, act, close. Nothing closes with WorkSafe untold or nothing changed.",
+        "sql": "select ref, site, kind, case when notifiable then 'YES' else '' end as notifiable, to_char(occurred_on, 'YYYY-MM-DD') as occurred, person as who, title as what, case when notifiable and worksafe_notified_on is null then 'NOT NOTIFIED' when worksafe_notified_on is not null then to_char(worksafe_notified_on, 'YYYY-MM-DD') else '' end as worksafe, status from v_incidents where status <> 'closed' order by occurred_on desc"
+      },
+      {
+        "title": "Open corrective actions",
+        "note": "An action written down and left overdue is a risk you knew about, dated, in your own records.",
+        "sql": "select title as action, source as from_what, site, owner, to_char(due_on, 'YYYY-MM-DD') as due, case when days_to_due < 0 then abs(days_to_due) || ' days OVERDUE' when days_to_due is not null then days_to_due || ' days' else 'NO DATE' end as countdown from v_actions where status = 'open' order by due_on nulls last"
+      },
+      {
+        "title": "Toolbox talks",
+        "note": "Worker engagement is a duty (HSWA Part 3). A site quiet past a fortnight shows above.",
+        "sql": "select site, coalesce(to_char(last_talk_on, 'YYYY-MM-DD'), 'NEVER') as last_talk, coalesce(days_since || ' days ago', '') as when_was_that, led_by, coalesce(topic, '') as topic from v_toolbox order by days_since desc nulls first"
+      }
+    ]
+  },
+  {
+    "name": "registers",
+    "title": "The registers",
+    "subtitle": "Health and Safety for Claude Code: hazards by risk, inductions, substances and the inspection calendar. Rendered by npm run view.",
+    "sections": [
+      {
+        "title": "The hazard register, highest risk first",
+        "note": "Risk is likelihood x consequence on a 5x5: 1-4 low, 5-9 moderate, 10-16 high, 17-25 critical. High or critical on administration or PPE alone breaches the hierarchy (GRWM reg 6).",
+        "sql": "select ref, site, title as hazard, category, score || '/25 ' || band as risk, coalesce(control_level, 'NONE') as control_level, coalesce(controls, 'NONE RECORDED') as controls, owner, coalesce(to_char(review_due_on, 'YYYY-MM-DD'), '') as review_due, status from v_hazards where status <> 'closed' order by score desc"
+      },
+      {
+        "title": "Site inductions",
+        "note": "Everyone active on the tools, contractors included (overlapping duties, HSWA s 34).",
+        "sql": "select person, role, company, site as usual_site, coalesce(to_char(inducted_on, 'YYYY-MM-DD'), '') as inducted, coalesce(to_char(expires_on, 'YYYY-MM-DD'), '') as expires, induction as status from v_inductions order by case induction when 'MISSING' then 1 when 'EXPIRED' then 2 when 'expiring' then 3 else 4 end, person"
+      },
+      {
+        "title": "Hazardous substances inventory",
+        "note": "An inventory with a current SDS per substance is the Hazardous Substances Regulations 2017 floor. An SDS older than five years is stale.",
+        "sql": "select name as substance, site, coalesce(quantity, '') as quantity, coalesce(location, '') as location, coalesce(to_char(sds_dated_on, 'YYYY-MM-DD'), '') as sds_dated, sds as sds_status from v_substances where status = 'in_use' order by case sds when 'MISSING' then 1 when 'STALE' then 2 else 3 end, name"
+      },
+      {
+        "title": "The inspection calendar",
+        "sql": "select site, kind, coalesce(to_char(due_on, 'YYYY-MM-DD'), '') as due, case when status = 'due' and days_to_due < 0 then abs(days_to_due) || ' days OVERDUE' when status = 'due' and days_to_due is not null then days_to_due || ' days' else '' end as countdown, coalesce(to_char(done_on, 'YYYY-MM-DD'), '') as done, done_by, coalesce(findings, '') as findings from v_inspections order by status desc, due_on nulls last"
       }
     ]
   }

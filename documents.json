@@ -1,11 +1,99 @@
 [
   {
-    "name": "example",
-    "title": "TODO(author): the first document this industry must produce",
-    "for_each": "select gen_random_uuid() as id, 'Example' as name",
+    "name": "worksafe-notification-draft",
+    "title": "WorkSafe notification (draft)",
+    "for_each": "select i.incident_id as id, (i.ref || ' ' || i.site) as name from v_incidents i where i.notifiable and i.worksafe_notified_on is null order by i.occurred_on",
     "file": "name",
     "sections": [
-      { "title": "Details", "sql": "select 'replace me' as item, $1::text as record_id" }
+      {
+        "title": "This is a draft. WorkSafe has NOT been notified by this page.",
+        "note": "Notify by phone first, as soon as possible: 0800 030 040 (HSWA s 56). This page gathers the particulars the written notification asks for, from the record. A person makes the call and sends the form; then record it: worksafe <ref> --on= --ref=.",
+        "sql": "select i.ref as our_reference, i.kind as event_type, to_char(current_date, 'DD Month YYYY') as prepared_on from v_incidents i where i.incident_id = $1"
+      },
+      {
+        "title": "What happened, where and when",
+        "sql": "select i.title as what_happened, to_char(i.occurred_on, 'DD Month YYYY') as date_of_event, i.site as location, coalesce(s.address, '') as address, coalesce(inc.description, '') as description from v_incidents i join incidents inc on inc.id = i.incident_id left join sites s on s.id = i.site_id where i.incident_id = $1"
+      },
+      {
+        "title": "The people",
+        "sql": "select coalesce(i.person, 'nobody injured') as person_involved, coalesce(p.role, '') as role, coalesce(p.company, 'employee') as employer, i.reported_by, coalesce(m.full_name, '') as site_manager from v_incidents i join incidents inc on inc.id = i.incident_id left join people p on p.id = inc.person_id left join sites s on s.id = i.site_id left join people m on m.id = s.manager_id where i.incident_id = $1"
+      },
+      {
+        "title": "The scene and what has been done",
+        "note": "The site of a notifiable event is preserved until an inspector says otherwise, except to help someone or make it safe (s 55).",
+        "sql": "select coalesce(string_agg(to_char(n.noted_on, 'YYYY-MM-DD') || ': ' || n.note, '  ||  '), 'nothing logged yet') as actions_taken_so_far from notes n where n.incident_id = $1"
+      }
+    ]
+  },
+  {
+    "name": "incident-report",
+    "title": "Incident report",
+    "for_each": "select i.incident_id as id, (i.ref || ' ' || i.title) as name from v_incidents i order by i.occurred_on desc",
+    "file": "name",
+    "sections": [
+      {
+        "title": "The event",
+        "sql": "select i.ref, i.title as what_happened, i.kind, case when i.notifiable then 'YES' else 'no' end as notifiable, to_char(i.occurred_on, 'DD Month YYYY') as occurred, i.site, coalesce(i.person, '') as person_involved, i.days_lost, i.status, coalesce(inc.description, '') as description from v_incidents i join incidents inc on inc.id = i.incident_id where i.incident_id = $1"
+      },
+      {
+        "title": "WorkSafe",
+        "note": "Blank for events that are not notifiable.",
+        "sql": "select to_char(i.worksafe_notified_on, 'DD Month YYYY') as notified_on, coalesce(i.worksafe_ref, '') as worksafe_reference from v_incidents i where i.incident_id = $1 and i.notifiable"
+      },
+      {
+        "title": "What the investigation found",
+        "sql": "select coalesce(i.findings, 'INVESTIGATION STILL OPEN: no findings recorded') as findings, coalesce(to_char(i.closed_on, 'DD Month YYYY'), 'not closed') as closed_on, coalesce(i.hazard_ref, 'not linked to the hazard register') as register_entry from v_incidents i where i.incident_id = $1"
+      },
+      {
+        "title": "What changes because of it",
+        "sql": "select a.title as corrective_action, a.owner, coalesce(to_char(a.due_on, 'YYYY-MM-DD'), '') as due, a.status, coalesce(to_char(a.done_on, 'YYYY-MM-DD'), '') as done from v_actions a where a.incident_id = $1 order by a.due_on nulls last"
+      },
+      {
+        "title": "The log",
+        "sql": "select to_char(n.noted_on, 'YYYY-MM-DD') as date, coalesce(p.full_name, '') as by, n.note from notes n left join people p on p.id = n.by_id where n.incident_id = $1 order by n.noted_on"
+      }
+    ]
+  },
+  {
+    "name": "site-safety-report",
+    "title": "Site safety report",
+    "for_each": "select st.id, st.name from sites st where st.status = 'active' order by st.name",
+    "file": "name",
+    "sections": [
+      {
+        "title": "The site",
+        "note": "One page of where this site stands. Take it to the pre-start or the board meeting.",
+        "sql": "select p.site, p.manager, p.people, to_char(current_date, 'DD Month YYYY') as prepared_on, coalesce(to_char(p.last_toolbox_on, 'YYYY-MM-DD'), 'never') as last_toolbox_talk, coalesce(to_char(p.next_inspection_due, 'YYYY-MM-DD'), 'none scheduled') as next_inspection from v_site_position p where p.site_id = $1"
+      },
+      {
+        "title": "Incidents, last 90 days",
+        "sql": "select i.ref, i.kind, case when i.notifiable then 'YES' else '' end as notifiable, to_char(i.occurred_on, 'YYYY-MM-DD') as occurred, i.title as what, case when i.notifiable and i.worksafe_notified_on is null then 'NOT NOTIFIED' when i.worksafe_notified_on is not null then to_char(i.worksafe_notified_on, 'YYYY-MM-DD') else '' end as worksafe, i.status from v_incidents i where i.site_id = $1 and i.occurred_on >= current_date - 90 order by i.occurred_on desc"
+      },
+      {
+        "title": "Open actions for this site",
+        "sql": "select a.title as action, a.source as from_what, a.owner, coalesce(to_char(a.due_on, 'YYYY-MM-DD'), 'NO DATE') as due, case when a.days_to_due < 0 then abs(a.days_to_due) || ' days OVERDUE' when a.days_to_due is not null then a.days_to_due || ' days' else '' end as countdown from v_actions a join sites st on st.name = a.site where st.id = $1 and a.status = 'open' order by a.due_on nulls last"
+      },
+      {
+        "title": "High and critical hazards",
+        "sql": "select h.ref, h.title as hazard, h.score || '/25 ' || h.band as risk, coalesce(h.control_level, 'NONE') as control_level, coalesce(to_char(h.review_due_on, 'YYYY-MM-DD'), '') as review_due from v_hazards h where h.site_id = $1 and h.status <> 'closed' and h.band in ('high','critical') order by h.score desc"
+      }
+    ]
+  },
+  {
+    "name": "hazard-register",
+    "title": "Hazard register",
+    "for_each": "select st.id, (st.name || ' hazard register') as name from sites st where st.status = 'active' order by st.name",
+    "file": "name",
+    "sections": [
+      {
+        "title": "The register",
+        "note": "Print this for the site office wall. Risk is likelihood x consequence on a 5x5; the hierarchy of controls runs elimination, substitution, isolation, engineering, administration, PPE (GRWM reg 6).",
+        "sql": "select h.ref, h.title as hazard, h.category, h.likelihood || ' x ' || h.consequence || ' = ' || h.score || '/25' as risk, h.band, coalesce(h.controls, 'NONE RECORDED') as controls, coalesce(h.control_level, 'NONE') as level, h.owner, coalesce(to_char(h.review_due_on, 'YYYY-MM-DD'), '') as review_due from v_hazards h where h.site_id = $1 and h.status <> 'closed' order by h.score desc"
+      },
+      {
+        "title": "If something happens",
+        "sql": "select 'Report it the moment it is safe to: report <site> --kind= --title=' as step_1, 'If anyone is killed, seriously injured or it was a notifiable incident: 0800 030 040 (WorkSafe), preserve the scene (HSWA ss 55-56)' as step_2, 'The register entry for the hazard gets the incident linked to it, and the review brought forward' as step_3 from sites st where st.id = $1"
+      }
     ]
   }
 ]
